@@ -79,7 +79,7 @@ def create_server(engine,web,port=8766,token=None):
                     running=store.one("SELECT kind FROM jobs WHERE status='running' LIMIT 1")
                     if running and data['activity']=='Sẵn sàng':
                         data['activity']={'prepare_set':'Đang tạo bộ đủ 12 đề','prepare':'Đang chuẩn bị đề trước giờ gửi','generate':'Đang gửi đề',
-                            'grade':'Đang chấm bài','preview':'Đang tạo mẫu Antigravity','incoming':'Đang nhận bài'}.get(running['kind'],'Đang xử lý')
+                            'grade':'Đang chấm bài','preview':'Đang tạo mẫu Codex','incoming':'Đang nhận bài'}.get(running['kind'],'Đang xử lý')
                     self.json(200,data); return
                 if path=='/api/batch':
                     self.json(200,batch_state(store,query.get('cycle',[None])[0]));return
@@ -87,9 +87,9 @@ def create_server(engine,web,port=8766,token=None):
                     data=samples(); preview=store.root/'ai-preview.json'
                     if preview.exists():
                         source=store.root/'ai-preview-source.json'
-                        provider=json.loads(source.read_text(encoding='utf-8')).get('provider','AI') if source.exists() else 'Antigravity'
+                        provider=json.loads(source.read_text(encoding='utf-8')).get('provider','AI') if source.exists() else 'Codex'
                         data[0]=data[0]|json.loads(preview.read_text(encoding='utf-8'))|{'source':provider+' · đã kiểm tra cấu trúc'}
-                    else: data[0]['source']='Mẫu biên soạn sẵn · chưa phải phản hồi Antigravity'
+                    else: data[0]['source']='Mẫu biên soạn sẵn · chưa phải phản hồi Codex'
                     if data[0].get('chart'):
                         chart=render_chart(data[0]['chart'],store.root/'samples')
                         data[0]['chart_image']='/api/file?path='+str(chart.relative_to(store.root)).replace('\\','/')
@@ -168,11 +168,9 @@ def create_server(engine,web,port=8766,token=None):
                 result={'ok':True}
                 if path=='/api/settings':
                     # Validate everything before persisting. Blank secret fields preserve saved credentials.
-                    url=Gateway.validate_url(data.get('gateway_url',store.get('gateway_url')))
                     band=float(data.get('band',6.5)); goal=float(data.get('goal_band',8))
                     if not 0<=band<=9 or not 0<goal<=9: raise ValueError('Band cần trong khoảng 0–9.')
                     token_value=str(data.get('telegram_token','')).strip()
-                    key_value=str(data.get('gateway_key','')).strip()
                     if token_value and not __import__('re').fullmatch(r'\d+:[A-Za-z0-9_-]{20,}',token_value): raise ValueError('Bot token sai định dạng.')
                     speech_python=str(data.get('speech_python','')).strip()
                     if speech_python and not Path(speech_python).is_file(): raise ValueError('Không tìm thấy Python giọng nói.')
@@ -187,8 +185,7 @@ def create_server(engine,web,port=8766,token=None):
                         webhook=engine.telegram.call('getWebhookInfo',token_override=token_value)
                         if webhook.get('url'): raise ValueError('Bot có webhook. Dùng bot riêng; cấu hình cũ chưa bị thay đổi.')
                     if token_value: store.secret('telegram_token',token_value)
-                    if key_value: store.secret('gateway_key',key_value)
-                    store.set(gateway_url=url,band=band,goal_band=goal,speech_python=speech_python,speech_model=model)
+                    store.set(band=band,goal_band=goal,speech_python=speech_python,speech_model=model)
                     if changed: store.set(telegram_chat_id='',telegram_username='',offset=0,pairing_code=secrets.token_hex(4),active=False)
                     if verified_bot:
                         store.set(telegram_username=verified_bot.get('username',''))
@@ -197,7 +194,7 @@ def create_server(engine,web,port=8766,token=None):
                     store.event('settings','Đã cập nhật cấu hình; bí mật được mã hóa bằng Windows DPAPI.')
                 elif path=='/api/codex/settings':
                     provider=data.get('ai_provider','codex_chat')
-                    if provider not in ('codex_chat','antigravity'): raise ValueError('Nhà cung cấp chưa hợp lệ.')
+                    if provider != 'codex_chat': raise ValueError('Nhà cung cấp chưa hợp lệ.')
                     thread_id=str(data.get('codex_thread_id',store.get('codex_thread_id'))).strip()
                     if not __import__('re').fullmatch(r'[a-zA-Z0-9_-]{8,100}',thread_id): raise ValueError('Thread ID Codex chưa hợp lệ.')
                     access_key=str(data.get('codex_access_key','')).strip()
@@ -217,7 +214,7 @@ def create_server(engine,web,port=8766,token=None):
                 elif path=='/api/approve':
                     store.set(approved=True); store.event('approve','Người dùng đã duyệt mẫu cấu trúc đề.')
                     if engine.ready(): engine.activate()
-                    else: result['message']='Đã duyệt mẫu. Kết nối Codex hoặc Antigravity để bật lịch.'
+                    else: result['message']='Đã duyệt mẫu. Kết nối Codex để bật lịch.'
                 elif path=='/api/telegram/test':
                     if not store.get('telegram_chat_id') or not store.get('telegram_token'):
                         raise ValueError('Lưu bot token, mở bot và bấm Start để ghép trước khi thử thông báo.')

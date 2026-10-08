@@ -5,7 +5,7 @@
 ## Cài và bắt đầu
 
 1. Clone mã nguồn rồi chạy `INSTALL.ps1` bằng PowerShell. Script tạo môi trường Python, shortcut Desktop và shortcut Startup cho Windows.
-2. Mở shortcut **Hourly Coach** → **Cài đặt kết nối**. Chọn Codex Chat và kiểm tra kết nối. Cần Codex được cài, đăng nhập ChatGPT và chat riêng cho gateway. Xem [CODEX-CHAT.md](CODEX-CHAT.md). Antigravity localhost là nguồn thay thế.
+2. Mở shortcut **Hourly Coach** → **Cài đặt kết nối**. Chọn Codex Chat và kiểm tra kết nối. Cần Codex được cài, đăng nhập ChatGPT và chat riêng cho gateway. Xem [CODEX-CHAT.md](CODEX-CHAT.md).
 3. Xem **Đề mẫu để duyệt** và mở đáp án tham khảo khi cần. Duyệt cấu trúc đề để bật lịch tại giờ tròn kế tiếp.
 4. Nút **Bật/Dừng tạo đề tự động** nằm ở đầu mọi màn hình. Dừng lịch vẫn giữ đề/bài nộp và tiếp tục chấm bài đã gửi; bật lại bắt đầu từ giờ tròn kế tiếp.
 5. Vào **Lộ trình mỗi ngày** → chọn đề → ô **Bài làm của bạn** ngay cuối đề. Lưu text và file, đánh dấu hoàn thành. Đủ **8 nhóm khác + 2 Writing + 2 Speaking = 12 đề** → **Bộ bài & chấm** → **Gửi tất cả & chấm**. Kết quả của cả bộ mở cùng lúc, đồng thời hiện dưới ô bài làm của từng đề. Lưu nháp không đưa bài đi chấm; server chặn gửi từng đề và chặn gửi bộ còn thiếu.

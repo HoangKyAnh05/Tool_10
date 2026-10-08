@@ -38,7 +38,7 @@ def protect(value, decrypt=False):
         ctypes.windll.kernel32.LocalFree(target.data)
 
 
-DEFAULTS = dict(gateway_url='http://127.0.0.1:8000/ask', ai_provider='antigravity', codex_thread_id='', codex_seed_thread_id='', codex_reasoning_effort='', telegram_chat_id='',
+DEFAULTS = dict(ai_provider='codex_chat', codex_thread_id='', codex_seed_thread_id='', codex_reasoning_effort='', telegram_chat_id='',
     telegram_username='', telegram_notifications_only=True, pairing_code=secrets.token_hex(4), approved=False, active=False,
     next_due=0, interval=3600, band=6.5, goal_band=8.0, level=1.0, offset=0,
     selected_assignment='', speech_model='base', speech_python='', last_growth_cycle=0, curriculum_version=2)
@@ -112,6 +112,7 @@ class Store:
             self.db.execute("ALTER TABLE submissions ADD COLUMN assistance TEXT DEFAULT 'unknown'")
         for key, value in DEFAULTS.items():
             self.db.execute('INSERT OR IGNORE INTO settings VALUES(?,?)', (key,json.dumps(value)))
+        self.db.execute("UPDATE settings SET value='\"codex_chat\"' WHERE key='ai_provider'")
         # Network sends that were interrupted have an uncertain outcome. Never auto-repeat them.
         if recover:
             self.db.execute("UPDATE outbox SET status='uncertain',error='Ứng dụng dừng giữa lúc gửi. Kiểm tra Telegram trước khi gửi lại.' WHERE status='sending'")
@@ -150,7 +151,6 @@ class Store:
 
     def settings(self):
         return {k:self.get(k) for k in DEFAULTS} | {
-            'gateway_key_set':bool(self.get('gateway_key')),
             'telegram_token_set':bool(self.get('telegram_token')),
             'codex_access_key_set':bool(self.get('codex_access_key'))}
 

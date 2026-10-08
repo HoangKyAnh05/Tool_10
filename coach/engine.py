@@ -33,11 +33,11 @@ class Engine:
             thread=threading.Thread(target=fn,daemon=True); thread.start(); self.threads.append(thread)
 
     def ready(self):
-        ai_ready=self.store.get('codex_thread_id') if self.store.get('ai_provider')=='codex_chat' else self.store.secret('gateway_key')
+        ai_ready=self.store.get('codex_thread_id')
         return bool(self.store.get('approved') and ai_ready)
 
     def activate(self):
-        if not self.ready(): raise ValueError('Kết nối Codex hoặc Antigravity và duyệt đề mẫu trước khi bật lịch.')
+        if not self.ready(): raise ValueError('Kết nối Codex và duyệt đề mẫu trước khi bật lịch.')
         due=next_hour(time.time())
         self.store.set(active=True,next_due=due)
         self.store.execute("UPDATE lesson_sets SET due=? WHERE source='gateway' AND published=0",(due,))
@@ -331,7 +331,7 @@ class Engine:
                 self.say('Chưa có nội dung nháp cho '+task['id']+'.',update); return
             self.submit(task['id'],draft['text'],json.loads(draft['files']),'tg-'+str(update['update_id']))
             self.store.execute('DELETE FROM drafts WHERE assignment_id=?',(task['id'],))
-            self.say('Đã nhận bài '+task['id']+'. Tôi sẽ phân tích toàn bộ chữ/ảnh và gửi đánh giá sau khi Antigravity hoàn thành.',update); return
+            self.say('Đã nhận bài '+task['id']+'. Tôi sẽ phân tích toàn bộ chữ/ảnh và gửi đánh giá sau khi Codex hoàn thành.',update); return
         if command:
             self.say('Lệnh chưa hỗ trợ. Gõ /help.',update); return
         if re.search(r'https?://(?:docs\.google\.com|drive\.google\.com)',text,re.I):

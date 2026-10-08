@@ -90,14 +90,13 @@ class CurriculumTests(Case):
     def test_parse_fenced_json(self):
         self.assertEqual(parse_json('```json\n{"a":1}\n```'),{'a':1})
         with self.assertRaises(ValueError): parse_json('No answer')
-    def test_gateway_prompt_rewrite(self):
-        self.store.secret('gateway_key','test-secret')
-        response=Mock(ok=True);response.json.return_value={'answer':'Done'}
-        with patch('coach.gateway.requests.post',return_value=response) as post:
-            self.assertEqual(self.engine.gateway.ask('Hãy trả một object json'),'Done')
-            payload=post.call_args.kwargs
-            self.assertNotIn('trả một object json',payload['json']['prompt'])
-            self.assertEqual(payload['timeout'],(5,300))
+    def test_gateway_uses_only_codex_even_with_legacy_provider_setting(self):
+        self.store.set(ai_provider='antigravity')
+        with patch.object(self.engine.gateway.codex,'ask',return_value={'answer':'Done'}) as ask:
+            self.assertEqual(self.engine.gateway.ask('Grade my work'),'Done')
+            ask.assert_called_once_with('Grade my work','')
+        self.assertEqual(self.engine.gateway.name,'Codex')
+
 
 class SchedulingTests(Case):
     def test_activation_without_telegram_uses_next_wall_clock_hour(self):
@@ -297,10 +296,10 @@ class TelegramTests(Case):
         self.engine.retry(True)
         self.assertEqual(self.store.one('SELECT status FROM outbox WHERE id=1')['status'],'sent')
     def test_secret_is_dpapi_encrypted(self):
-        self.store.secret('gateway_key','TEST-PRIVATE-KEY')
-        self.assertNotIn('TEST-PRIVATE-KEY',self.store.get('gateway_key'))
-        self.assertEqual(self.store.secret('gateway_key'),'TEST-PRIVATE-KEY')
-        self.assertNotIn('gateway_key',self.store.settings())
+        self.store.secret('codex_access_key','TEST-PRIVATE-KEY')
+        self.assertNotIn('TEST-PRIVATE-KEY',self.store.get('codex_access_key'))
+        self.assertEqual(self.store.secret('codex_access_key'),'TEST-PRIVATE-KEY')
+        self.assertNotIn('codex_access_key',self.store.settings())
 
 class HttpTests(Case):
     def test_approval_starts_local_schedule_without_bot(self):
@@ -340,7 +339,7 @@ class HttpTests(Case):
     def test_unauthenticated_api_denied(self):
         self.assertEqual(requests.get(self.url+'/api/state').status_code,401)
     def test_settings_redacted(self):
-        self.store.secret('gateway_key','SECRET-PRIVATE')
+        self.store.secret('codex_access_key','SECRET-PRIVATE')
         response=self.client.get(self.url+'/api/state');self.assertEqual(response.status_code,200)
         self.assertNotIn('SECRET-PRIVATE',response.text)
     def test_csrf_and_cross_origin_denied(self):
@@ -379,8 +378,5 @@ class HttpTests(Case):
             self.engine.grade(sid)
         row=self.store.one('SELECT * FROM assignments WHERE id=?',(tid,));self.assertEqual(row['score'],80)
         result=self.client.get(self.url+'/api/task?id='+tid).json();self.assertTrue(result['answer_key']);self.assertEqual(len(result['submissions']),1)
-    def test_gateway_restricted_to_localhost(self):
-        for url in ('https://evil.example/ask','http://127.0.0.1:8000/ask?bad=1','http://user:pass@127.0.0.1/ask'):
-            with self.assertRaises(ValueError):Gateway.validate_url(url)
 
 if __name__=='__main__': unittest.main()

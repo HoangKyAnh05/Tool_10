@@ -41,7 +41,7 @@ def parse_json(answer):
     except json.JSONDecodeError:
         start = text.find('{')
         if start < 0:
-            raise ValueError('Antigravity chưa xuất JSON hợp lệ.')
+            raise ValueError('Codex chưa xuất JSON hợp lệ.')
         value,end = json.JSONDecoder().raw_decode(text[start:])
         if not isinstance(value,dict):
             raise ValueError('Kết quả AI phải là một đối tượng JSON.')
