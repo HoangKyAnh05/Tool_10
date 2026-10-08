@@ -14,6 +14,7 @@ from .curriculum import SCHEDULE,public_assignment
 from .gateway import Gateway
 from .media import ALLOWED,VIDEO,MAX_FILE,MAX_VIDEO
 from .batches import batch_state,save_draft,submit_batch,FINAL
+from .lessons import set_summary,preparation_lead_seconds
 from .charts import render_chart
 from .codex_chat import ChatError
 
@@ -56,7 +57,7 @@ def create_server(engine,web,port=8766,token=None):
                     date=query.get('date',[day_of()])[0]
                     if len(date)!=10: raise ValueError('Ngày chưa hợp lệ.')
                     settings=store.settings()
-                    tasks=store.rows('SELECT id,seq,day,category,skill,level,title,status,sent,due,score,error FROM assignments WHERE day=? ORDER BY seq',(date,))
+                    tasks=store.rows('SELECT id,seq,day,category,skill,level,title,status,sent,due,score,error,(seq-1)/12+1 AS cycle FROM assignments WHERE day=? AND sent>0 AND archived=0 ORDER BY seq',(date,))
                     dates=store.rows('SELECT DISTINCT day FROM assignments ORDER BY day DESC')
                     data={'settings':settings,'date':date,'today':day_of(),'stats':store.stats(date),'tasks':tasks,
                         'dates':[r['day'] for r in dates],'activity':engine.activity,'poll_error':engine.poll_error,
@@ -70,10 +71,14 @@ def create_server(engine,web,port=8766,token=None):
                     data['codex_requests']=store.rows('SELECT id,created,completed,status,model,error,length(answer) AS answer_chars FROM codex_requests ORDER BY created DESC LIMIT 8')
                     data['next_sequence']=waiting['seq'] if waiting else (store.one('SELECT max(seq) AS n FROM assignments')['n'] or 0)+1
                     data['batch']=batch_state(store)
+                    data['lesson_sets']=set_summary(store)
+                    data['preparation_lead_seconds']=preparation_lead_seconds(store)
+                    data['preparation_starts_at']=max(0,(settings['next_due'] or 0)-data['preparation_lead_seconds'])
+                    data['legacy_tasks']=store.rows('SELECT id,title,category,skill FROM assignments WHERE archived=1 AND sent>0 ORDER BY seq')
                     data['batch_history']=store.rows('SELECT id,cycle,status,created,completed FROM batches ORDER BY created DESC LIMIT 20')
                     running=store.one("SELECT kind FROM jobs WHERE status='running' LIMIT 1")
                     if running and data['activity']=='Sẵn sàng':
-                        data['activity']={'prepare':'Đang chuẩn bị đề trước giờ gửi','generate':'Đang gửi đề',
+                        data['activity']={'prepare_set':'Đang tạo bộ đủ 12 đề','prepare':'Đang chuẩn bị đề trước giờ gửi','generate':'Đang gửi đề',
                             'grade':'Đang chấm bài','preview':'Đang tạo mẫu Antigravity','incoming':'Đang nhận bài'}.get(running['kind'],'Đang xử lý')
                     self.json(200,data); return
                 if path=='/api/batch':
@@ -92,7 +97,7 @@ def create_server(engine,web,port=8766,token=None):
                 if path=='/api/task':
                     task_id=query.get('id',[''])[0]
                     task=store.one('SELECT * FROM assignments WHERE id=?',(task_id,))
-                    if not task: self.json(404,{'error':'Không tìm thấy bài.'}); return
+                    if not task or not task['sent']: self.json(404,{'error':'Bộ chưa mở hoặc không tìm thấy bài.'}); return
                     task['body']=public_assignment(json.loads(task['body']))
                     if task['body'].get('chart'):
                         chart=render_chart(task['body']['chart'],store.root/'assignments'/task_id)
@@ -123,6 +128,13 @@ def create_server(engine,web,port=8766,token=None):
                     target=(store.root/relative).resolve()
                     if not target.is_relative_to(store.root.resolve()) or not target.is_file(): self.json(404,{'error':'File không tồn tại.'}); return
                     if target.suffix.lower() not in ALLOWED: self.json(403,{'error':'File không được phép tải.'}); return
+                    parts=target.relative_to(store.root.resolve()).parts
+                    if len(parts)>2 and parts[0]=='assignments':
+                        owner=store.one('SELECT sent FROM assignments WHERE id=?',(parts[1],))
+                        if owner and not owner['sent']:self.json(404,{'error':'Bộ đề chưa mở.'});return
+                    if len(parts)>2 and parts[0]=='submissions':
+                        owner=store.one('SELECT b.status FROM batch_items i JOIN batches b ON b.id=i.batch_id WHERE i.submission_id=?',(parts[1],))
+                        if owner and owner['status'] not in FINAL:self.json(404,{'error':'Kết quả cả bộ chưa mở.'});return
                     self.serve_file(target,download=target.suffix.lower() not in ('.png','.jpg','.jpeg','.webp','.wav','.mp3','.ogg','.m4a')); return
                 target=web/('index.html' if path=='/' else path.lstrip('/'))
                 if target.resolve().is_relative_to(web) and target.is_file(): self.serve_file(target); return
@@ -216,11 +228,7 @@ def create_server(engine,web,port=8766,token=None):
                 elif path=='/api/preview': store.enqueue('preview',{},'preview:'+secrets.token_hex(8)); engine.wake.set()
                 elif path=='/api/sample': store.enqueue('sample',{},'sample-job:'+secrets.token_hex(8)); engine.wake.set()
                 elif path=='/api/now':
-                    if not engine.ready() or not store.get('active'): raise ValueError('Duyệt mẫu và bật lịch trước khi gửi đề.')
-                    if store.one("SELECT id FROM jobs WHERE kind IN ('generate','prepare') AND status IN ('pending','running','failed')"): raise ValueError('Đã có đề đang tạo hoặc cần thử lại.')
-                    waiting=store.one('SELECT seq FROM assignments WHERE sent=0 ORDER BY seq LIMIT 1')
-                    seq=waiting['seq'] if waiting else (store.one('SELECT max(seq) AS n FROM assignments')['n'] or 0)+1
-                    store.enqueue('generate',{'seq':seq},'manual:'+secrets.token_hex(8)); engine.wake.set()
+                    engine.generate_now()
                 elif path=='/api/upload':
                     name=Path(str(data.get('name',''))).name; suffix=Path(name).suffix.lower()
                     if suffix not in ALLOWED: raise ValueError('Định dạng file chưa hỗ trợ.')

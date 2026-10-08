@@ -6,7 +6,7 @@ Gateway dùng Codex App Server và phiên đăng nhập ChatGPT của Codex trê
 
 ## Dùng trong app
 
-Chọn Codex Chat → kiểm tra kết nối. Chat gateway phải chỉ có một tiến trình ghi; mở cùng chat để gửi trực tiếp trong Codex Desktop có thể gây xung đột. Dùng chat riêng cho API và xem lịch sử qua Hourly Coach. Khi đổi tài khoản ChatGPT, bảo đảm Codex CLI/App Server dùng phiên mới rồi kiểm tra kết nối. Nếu hết hạn mức hoặc auth lỗi, app lưu lỗi để thử lại.
+Chọn Codex Chat → kiểm tra kết nối. Chat gateway phải chỉ có một tiến trình ghi; mở cùng chat để gửi trực tiếp trong Codex Desktop có thể gây xung đột. Dùng chat riêng cho API và xem lịch sử qua Hourly Coach. Khi tệp đăng nhập Codex thay đổi sau khi đổi tài khoản, gateway khởi động lại kết nối App Server trước yêu cầu kế tiếp và giữ chat riêng cùng mức Medium. Kiểm tra kết nối rồi thử một câu trả lời thật; online chỉ xác nhận bước nối, không chứng minh lượt tạo/chấm thành công. Nếu hết hạn mức hoặc auth lỗi, app lưu lỗi để thử lại.
 
 Không cần key riêng `/ask` để tạo đề/chấm từ giao diện. Chỉ đặt key tối thiểu 16 ký tự khi muốn gọi gateway từ tool khác. Key lưu bằng DPAPI, ô trống giữ nguyên giá trị đã lưu.
 

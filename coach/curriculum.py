@@ -5,12 +5,12 @@ from .charts import validate_chart
 
 BATCH_SIZE=12
 SCHEDULE = [
-    ('IELTS','Listening'),('Cầu lông',''),('Content','Short-form'),('Edit',''),
-    ('IELTS','Reading'),('Bán hàng',''),('Dạy',''),('Quay 100 source',''),
-    ('IELTS','Writing'),('Tạo dịch vụ gói gọn',''),('Livestream','Giữ chân + chuyên môn'),('IELTS','Speaking'),
-    ('IELTS','Listening'),('Cầu lông',''),('Content','Storytelling'),('Edit',''),
-    ('IELTS','Reading'),('Bán hàng',''),('Dạy',''),('Quay 100 source',''),
-    ('IELTS','Writing'),('Tạo dịch vụ gói gọn',''),('Livestream','Hài hước + chuyên môn'),('IELTS','Speaking')]
+    ('IELTS','Writing'),('IELTS','Speaking'),('Cầu lông',''),('Content','Short-form'),
+    ('Edit',''),('Bán hàng',''),('Dạy',''),('Quay 100 source',''),
+    ('Tạo dịch vụ gói gọn',''),('Livestream','Giữ chân + chuyên môn'),('IELTS','Writing'),('IELTS','Speaking'),
+    ('IELTS','Writing'),('IELTS','Speaking'),('Cầu lông',''),('Content','Storytelling'),
+    ('Edit',''),('Bán hàng',''),('Dạy',''),('Quay 100 source',''),
+    ('Tạo dịch vụ gói gọn',''),('Livestream','Hài hước + chuyên môn'),('IELTS','Writing'),('IELTS','Speaking')]
 
 RUBRICS = {
     'IELTS': [('Task achievement / response',25),('Coherence & cohesion',25),('Lexical resource',25),('Grammar range & accuracy',25)],
@@ -156,13 +156,13 @@ Nhóm: {category}; kỹ năng: {skill}; hệ số độ khó: {level:.2f}.
 {extra}
 Tránh lặp lại các tiêu đề: {json.dumps(recent,ensure_ascii=False)}.
 Tăng độ khó bằng độ phức tạp, độ chính xác, ràng buộc; KHÔNG tăng thời lượng. Dữ liệu giả lập phải ghi rõ là dữ liệu thực hành. Tất cả nguyên liệu phải nằm trong đề; không phụ thuộc link, công cụ trả tiền hoặc yêu cầu người học tự tìm đề. Ghi rõ mục tiêu đo được, bước làm, phân bổ 60 phút, đầu ra và tiêu chí cho đủ 100 điểm. Rubric dùng đúng schema, không thay đổi tên/điểm.
-answer_key: lời giải đầy đủ, bài mẫu cụ thể và lỗi thường gặp; phải tách khỏi đề công khai. Không tự ghi điểm năng lực của người học. Người học lưu bài ở ô cuối từng đề, hoàn thành đủ 12 loại (9 nhóm, IELTS 4 kỹ năng) mới gửi cả bộ đi chấm; không hướng dẫn chấm riêng ngay khi làm một đề. App chấm nền và trả kết quả cả bộ cùng lúc.
+answer_key: lời giải đầy đủ, bài mẫu cụ thể và lỗi thường gặp; phải tách khỏi đề công khai. Không tự ghi điểm năng lực của người học. Mỗi giờ app phát một BỘ đủ 12 đề: 8 nhóm khác + 2 Writing + 2 Speaking, không có Listening/Reading. Người học lưu bài ở ô cuối từng đề, hoàn thành đủ 12 bài của cùng bộ mới gửi đi chấm. App chấm nền và trả kết quả cả bộ cùng lúc. Hai Writing và hai Speaking phải có chủ đề khác nhau.
 Xuất duy nhất đối tượng JSON hợp lệ theo schema sau; không markdown ngoài JSON, không lời chào, không rút gọn bất kỳ phần nào:
 {json.dumps(schema,ensure_ascii=False)}'''
 
 
 def public_assignment(data):
-    public={k:v for k,v in data.items() if k not in ('answer_key','listening_sections')}
+    public={k:v for k,v in data.items() if k not in ('answer_key','listening_sections','writing_model_answers')}
     if 'questions' in public:
         public['questions']=[{'number':q['number'],'question':q['question']} for q in public['questions']]
     return public
@@ -184,7 +184,7 @@ def assignment_text(task):
         if data.get(key):
             lines.append('\n'+label+'\n'+'\n\n'.join(f"{r['time']} phút · {r['focus']}\n{r['script']}\nKiểm tra: {r['check']}" for r in data[key]))
     lines.extend(['\nNỘP BÀI\n'+data['deliverables'], '\nTHANG CHẤM\n'+'\n'.join(f"{r['name']}: {r['max_score']} điểm" for r in data['rubric']),
-       f"\nMở Hourly Coach trên laptop → Lộ trình mỗi ngày → {task['id']} → Bài nộp. Lưu text/ảnh/video/DOCX/audio ngay cuối đề và đánh dấu hoàn thành. Đủ 12 loại đề → Bộ bài & chấm → Gửi tất cả & chấm; kết quả mở cùng lúc. Đề tiếp theo có tại mốc giờ đúng; bài trễ vẫn được chấm. FULL ĐÁP ÁN nằm ở tab Đáp án và file kèm, có thể mở khi bí. Khai rõ có/không tham khảo đáp án. Nếu dùng cách nộp Telegram cũ: /chon {task['id']}, gửi DOCX trực tiếp hoặc text/ảnh/audio rồi /nop {task['id']}."])
+       f"\nMở Hourly Coach trên laptop → Bộ bài & chấm → {task['id']}. Lưu text/ảnh/video/DOCX/audio ngay cuối đề và đánh dấu hoàn thành. Đủ 12 bài cùng bộ (8 nhóm khác + 2 Writing + 2 Speaking) → Gửi tất cả & chấm; kết quả mở cùng lúc. Bộ tiếp theo có tại mốc giờ đúng; bộ cũ vẫn làm được. FULL ĐÁP ÁN nằm ở tab Đáp án, có thể mở khi bí. Khai rõ có/không tham khảo đáp án."])
     return '\n'.join(lines)
 
 

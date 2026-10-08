@@ -22,18 +22,28 @@ class CodexChat:
     def __init__(self, store):
         self.store = store
         self.lock = threading.RLock()
+        self.request_condition = threading.Condition()
+        self.request_order = []
         self.process = None
         self.events = queue.Queue()
         self.sequence = 0
         self.bound_thread = None
         self.bound_effort = None
+        self.auth_stamp = None
         self.info = {}
         self.store.execute('''CREATE TABLE IF NOT EXISTS codex_requests(
             id TEXT PRIMARY KEY, fingerprint TEXT, created REAL, completed REAL,
             status TEXT, thread_id TEXT, turn_id TEXT, model TEXT,
             prompt TEXT, image_path TEXT, answer TEXT, error TEXT, http_status INTEGER)''')
 
-    def close(self):
+    def close(self,force=False):
+        # Shutdown must unblock a long answer before waiting for its request lock.
+        # The interrupted request records a failure; it is never counted as a result.
+        if force:
+            process=self.process
+            if process and process.poll() is None:
+                try:process.terminate()
+                except OSError:pass
         with self.lock:
             if self.process:
                 if self.process.poll() is None:
@@ -45,6 +55,7 @@ class CodexChat:
                 self.process = None
             self.bound_thread = None
             self.bound_effort = None
+            self.auth_stamp = None
             self.info = {}
 
     def _send(self, message):
@@ -105,6 +116,14 @@ class CodexChat:
             for message in deferred:
                 self.events.put(message)
 
+    @staticmethod
+    def _auth_stamp():
+        root=Path(os.environ.get('CODEX_HOME') or (Path.home()/'.codex'))
+        try:
+            stat=(root/'auth.json').stat()
+            return (stat.st_mtime_ns,stat.st_size,stat.st_ctime_ns)
+        except OSError:return None
+
     def _connect(self):
         thread_id = self.store.get('codex_thread_id')
         effort = self.store.get('codex_reasoning_effort') or ''
@@ -112,7 +131,8 @@ class CodexChat:
             raise ChatError('Mức suy nghĩ Codex chưa hợp lệ.', 400)
         if not isinstance(thread_id, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{8,100}', thread_id):
             raise ChatError('Chưa chọn cuộc chat Codex riêng cho tool.', 400)
-        if self.process and self.process.poll() is None and self.bound_thread == thread_id and self.bound_effort == effort:
+        auth_stamp=self._auth_stamp()
+        if self.process and self.process.poll() is None and self.bound_thread == thread_id and self.bound_effort == effort and self.auth_stamp == auth_stamp:
             return
         self.close()
         executable = shutil.which('codex')
@@ -145,9 +165,10 @@ class CodexChat:
         try:
             result = self._call('thread/resume', resume_params)
         except ChatError as error:
-            if 'already has an active writer' not in str(error) or thread_id != self.store.get('codex_seed_thread_id'):
+            if 'already has an active writer' not in str(error):
                 raise
-            # The desktop owns the seed chat. A single fork retains its model and
+            # Another app may own the selected chat after an account switch.
+            # A single fork retains its history, model and
             # instructions while giving the gateway one exclusive writer.
             result = self._call('thread/fork', resume_params)
             thread_id = result['thread']['id']
@@ -161,6 +182,7 @@ class CodexChat:
             raise ChatError('Chat Codex đang có một lượt chạy khác. Hãy đợi lượt đó hoàn tất.', 409)
         self.bound_thread = thread_id
         self.bound_effort = effort
+        self.auth_stamp = self._auth_stamp()
         self.info = {'thread_id': thread_id, 'model': result.get('model'),
                      'reasoning_effort': result.get('reasoningEffort'), 'auth_type': 'chatgpt'}
 
@@ -189,7 +211,15 @@ class CodexChat:
         if not isinstance(request_id, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{8,100}', request_id):
             raise ChatError('request_id cần 8–100 ký tự chữ, số, dấu - hoặc _.', 400)
         fingerprint = hashlib.sha256(json.dumps([prompt, image_path], ensure_ascii=False).encode()).hexdigest()
+        ticket=object()
+        with self.request_condition:
+            self.request_order.append(ticket)
+            if not self.request_condition.wait_for(lambda:self.request_order[0] is ticket,timeout=900):
+                self.request_order.remove(ticket);self.request_condition.notify_all()
+                raise ChatError('Hàng đợi Codex đang quá dài. Bài đã lưu; thử lại sau.',503)
         if not self.lock.acquire(timeout=90):
+            with self.request_condition:
+                self.request_order.remove(ticket);self.request_condition.notify_all()
             raise ChatError('Chat đang bận. Thử lại sau khi yêu cầu hiện tại hoàn tất.', 503)
         try:
             previous = self.store.one('SELECT * FROM codex_requests WHERE id=?', (request_id,))
@@ -259,3 +289,5 @@ class CodexChat:
                 raise
         finally:
             self.lock.release()
+            with self.request_condition:
+                self.request_order.remove(ticket);self.request_condition.notify_all()

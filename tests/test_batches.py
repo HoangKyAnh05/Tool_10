@@ -20,7 +20,7 @@ class BatchTests(Case):
     def test_each_half_day_has_all_twelve_types(self):
         for schedule in [SCHEDULE[:12],SCHEDULE[12:]]:
             self.assertEqual(len({c for c,s in schedule}),9)
-            self.assertEqual({s for c,s in schedule if c=='IELTS'},{'Speaking','Writing','Reading','Listening'})
+            self.assertEqual({s for c,s in schedule if c=='IELTS'},{'Speaking','Writing'})
     def test_incomplete_batch_is_not_partially_submitted(self):
         tid=self.task();save_draft(self.store,tid,'Partial answer',[],True)
         with self.assertRaises(ValueError):submit_batch(self.engine,1,'a'*32)
@@ -70,9 +70,31 @@ class BatchTests(Case):
         self.assertFalse(self.store.rows('SELECT * FROM outbox'))
     def test_next_cycle_draft_can_be_saved_while_earlier_batch_grades(self):
         self.make_set();submit_batch(self.engine,1,'1'*32)
-        tid=self.task(seq=13,category='IELTS',skill='Listening')
+        tid=self.task(seq=13,category='IELTS',skill='Writing')
         save_draft(self.store,tid,'Work on the next set',[],False)
         self.assertTrue(self.store.one('SELECT text FROM drafts WHERE assignment_id=?',(tid,)))
+    def test_verified_criterion_updates_batch_and_inline_result_together(self):
+        self.make_set();submit_batch(self.engine,1,'7'*32)
+        from coach.curriculum import validate_evaluation,rubric_for
+        submissions=self.store.rows('SELECT s.*,a.body,a.skill,a.category FROM submissions s JOIN assignments a ON a.id=s.assignment_id ORDER BY a.seq')
+        speaking=[]
+        for r in submissions:
+            body=json.loads(r['body']);rubric=rubric_for(r['category'],r['skill']);body['rubric']=rubric
+            self.store.execute('UPDATE assignments SET body=? WHERE id=?',(json.dumps(body),r['assignment_id']))
+            e={'criteria':[dict(c,score=None if r['skill']=='Speaking' and c['name']=='Pronunciation' else c['max_score']*.8,feedback='Based on submitted evidence') for c in rubric],**{k:'Full feedback with evidence limits' for k in ('summary','corrections','model_answer','next_steps','evidence_limits')}}
+            e=validate_evaluation(e,rubric)
+            self.store.execute('UPDATE submissions SET status=?,evaluation=? WHERE id=?',('graded' if e['complete'] else 'needs_evidence',json.dumps(e),r['id']))
+            if r['skill']=='Speaking':speaking.append(r['assignment_id'])
+        finalize(self.engine,submissions[-1]['id'])
+        self.assertEqual(batch_state(self.store,1)['batch']['status'],'needs_evidence')
+        for tid in speaking:self.engine.verify_criteria(tid,{'3':18},'QA: a human-review source is recorded for this isolated test.')
+        state=batch_state(self.store,1)
+        self.assertEqual(state['batch']['status'],'graded')
+        for tid in speaking:
+            row=next(r for r in state['results'] if r['id']==tid)
+            inline=json.loads(self.store.one('SELECT evaluation FROM assignments WHERE id=?',(tid,))['evaluation'])
+            self.assertEqual(row['evaluation'],inline)
+            self.assertTrue(row['evaluation']['criteria'][3]['human_verified'])
     def test_video_timecoded_frames_are_retained_as_evidence(self):
         tid=self.task(category='Edit',skill='')
         folder=self.root/'uploads'/'video';folder.mkdir(parents=True)
@@ -113,6 +135,12 @@ class BatchHttpTests(Case):
         self.assertNotIn('PRIVATE PARTIAL RESULT',response.text)
         self.assertTrue(response.json()['draft']['complete'])
         self.assertEqual(self.client.get(self.url+'/api/batch?cycle=1').json()['results'],[])
+        folder=self.root/'submissions'/row['id'];folder.mkdir(parents=True)
+        (folder/'result.txt').write_text('PRIVATE PARTIAL RESULT')
+        download=self.url+'/api/file?path=submissions/'+row['id']+'/result.txt'
+        self.assertEqual(self.client.get(download).status_code,404)
+        self.store.execute("UPDATE batches SET status='graded' WHERE id=?",('3'*32,))
+        self.assertEqual(self.client.get(download).status_code,200)
 
 
 if __name__=='__main__':unittest.main()

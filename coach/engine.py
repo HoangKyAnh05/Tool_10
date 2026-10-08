@@ -11,6 +11,9 @@ from .media import ALLOWED,AUDIO,VIDEO,MAX_TEXT,MAX_IMAGES,extract_docx,extract_
 from .samples import samples
 from .telegram import Telegram
 from .charts import render_chart
+from .lessons import create_set,set_tasks,save_exercise,prepare_assets,publish_set,preparation_lead_seconds
+from .novelty import validate_novelty
+from .writing_formats import expected_format,format_prompt,validate_format
 
 
 def next_hour(now):
@@ -22,6 +25,7 @@ class Engine:
     def __init__(self,store):
         self.store=store; self.gateway=Gateway(store); self.telegram=Telegram(store)
         self.stop=threading.Event(); self.wake=threading.Event()
+        self.schedule_lock=threading.RLock()
         self.activity='Sẵn sàng'; self.poll_error=''; self.threads=[]
 
     def start(self):
@@ -34,22 +38,25 @@ class Engine:
 
     def activate(self):
         if not self.ready(): raise ValueError('Kết nối Codex hoặc Antigravity và duyệt đề mẫu trước khi bật lịch.')
-        self.store.set(active=True,next_due=next_hour(time.time()))
-        self.prepare_once(force=True)
-        self.store.event('schedule','Đã bật lịch. Đề đầu tiên có trong app tại mốc đầu giờ kế tiếp; các lượt sau vào mỗi giờ đúng.')
+        due=next_hour(time.time())
+        self.store.set(active=True,next_due=due)
+        self.store.execute("UPDATE lesson_sets SET due=? WHERE source='gateway' AND published=0",(due,))
+        self.prepare_once()
+        self.store.event('schedule','Đã bật lịch. Mỗi giờ đúng mở một bộ đủ 12 đề: 8 nhóm khác + 2 Writing + 2 Speaking.')
 
     def schedule_once(self,now=None):
         now=time.time() if now is None else now
         if not self.store.get('active') or not self.ready(): return False
         due=self.store.get('next_due')
         if not due or now<due: return False
-        if self.store.one("SELECT id FROM jobs WHERE kind IN ('generate','prepare') AND status IN ('pending','running','failed')"):
-            return False
-        waiting=self.store.one('SELECT seq FROM assignments WHERE sent=0 ORDER BY seq LIMIT 1')
-        seq=waiting['seq'] if waiting else (self.store.one('SELECT max(seq) AS n FROM assignments')['n'] or 0)+1
-        self.store.enqueue('generate',{'seq':seq},'scheduled:'+str(due))
-        self.wake.set()
-        return True
+        with self.schedule_lock:
+            lesson=self.store.one("SELECT * FROM lesson_sets WHERE source='gateway' AND published=0 ORDER BY cycle LIMIT 1")
+            if not lesson:return self.prepare_once(now,force=True)
+            if lesson['status']!='ready':return False
+            if not publish_set(self,lesson['cycle'],now):return False
+            self.store.set(next_due=next_hour(now))
+            self.prepare_once(now)
+            return True
 
     def scheduler(self):
         while not self.stop.wait(1):
@@ -62,24 +69,77 @@ class Engine:
         now=time.time() if now is None else now
         if not self.store.get('active') or not self.ready(): return False
         due=self.store.get('next_due')
-        if not force and (not due or now<due-900): return False
-        if self.store.one("SELECT id FROM jobs WHERE kind IN ('generate','prepare') AND status IN ('pending','running','failed')"):return False
-        waiting=self.store.one('SELECT * FROM assignments WHERE sent=0 ORDER BY seq LIMIT 1')
-        if waiting: return False
-        seq=(self.store.one('SELECT max(seq) AS n FROM assignments')['n'] or 0)+1
-        self.store.enqueue('prepare',{'seq':seq},'prepare:'+str(due));self.wake.set();return True
+        if not due:return False
+        if not force and now<due-preparation_lead_seconds(self.store):return False
+        with self.schedule_lock:
+            if self.store.one("SELECT cycle FROM lesson_sets WHERE source='gateway' AND published=0"):return False
+            lesson=create_set(self.store,due)
+            self.store.enqueue('prepare_set',{'cycle':lesson['cycle']},'prepare-set:'+str(lesson['cycle']))
+            self.wake.set();return True
+
+    def generate_now(self):
+        if not self.ready() or not self.store.get('active'):raise ValueError('Duyệt mẫu và bật lịch trước khi tạo bộ.')
+        with self.schedule_lock:
+            lesson=self.store.one("SELECT * FROM lesson_sets WHERE source='gateway' AND published=0 ORDER BY cycle LIMIT 1")
+            if lesson and lesson['status']=='failed':raise ValueError('Bộ đang tạo bị lỗi. Bấm Thử lại để tiếp tục các đề còn thiếu.')
+            self.store.set(next_due=time.time())
+            if lesson:self.store.execute('UPDATE lesson_sets SET due=? WHERE cycle=?',(time.time(),lesson['cycle']))
+            self.prepare_once(force=True)
+            self.schedule_once()
+
+    def generate_set(self,cycle):
+        lesson=self.store.one('SELECT * FROM lesson_sets WHERE cycle=?',(cycle,))
+        if not lesson or lesson['published']:return True
+        self.store.execute("UPDATE lesson_sets SET status='preparing',error='',preparation_started=CASE WHEN preparation_started>0 THEN preparation_started ELSE ? END WHERE cycle=?",(time.time(),cycle))
+        for slot in range(1,13):
+            if self.stop.is_set() or not self.store.get('active'):return False
+            seq=(cycle-1)*12+slot
+            category,skill=SCHEDULE[(seq-1)%len(SCHEDULE)]
+            existing=self.store.one('SELECT id,body FROM assignments WHERE seq=?',(seq,))
+            kind=expected_format(self.store,seq) if skill=='Writing' else None
+            if existing:
+                if not kind:continue
+                try:validate_format(json.loads(existing['body']),kind);continue
+                except ValueError:pass
+            self.activity=f'Đang tạo bộ {cycle} · {slot}/12 · {category} {skill}'
+            recent=[r['title'] for r in self.store.rows('SELECT title FROM assignments WHERE archived=0 ORDER BY seq DESC LIMIT 24')]
+            prompt=assignment_prompt(category,skill,lesson['level'],self.store.get('band'),self.store.get('goal_band'),recent)
+            prompt+=f'\nĐây là đề {slot}/12 của bộ {cycle}. Viết chủ đề mới, khác mọi đề đã có trong bộ; không lấy lại đề mẫu.'
+            prior=self.store.rows('SELECT category,skill,title,body FROM assignments WHERE archived=0 ORDER BY seq DESC LIMIT 36')
+            summaries=[]
+            for old in prior:
+                body=json.loads(old['body'])
+                summaries.append({'category':old['category'],'skill':old['skill'],'title':old['title'],'brief':body.get('objective','')[:500],'writing_tasks':body.get('writing_tasks'),'cue_card':body.get('speaking_tasks',{}).get('part2',{}).get('cue_card')})
+            prompt+='\nNội dung đã có (KHÔNG dùng lại, không chỉ đổi tên hoặc thay số): '+json.dumps(summaries,ensure_ascii=False)
+            if kind:prompt+='\n'+format_prompt(kind)
+            for attempt in range(3):
+                try:
+                    data=validate_assignment(parse_json(self.gateway.ask(prompt)),category,skill)
+                    if kind:validate_format(data,kind)
+                    validate_novelty(self.store,data,category,skill,existing['id'] if existing else None)
+                    save_exercise(self.store,cycle,slot,data)
+                    break
+                except ValueError as error:
+                    if attempt==2:raise
+                    prompt+='\nPhản hồi kiểm tra lần trước: '+str(error)+' Hãy tạo một đề mới đầy đủ, xử lý lỗi này.'
+        prepare_assets(self,cycle)
+        self.store.event('prepared',f'Bộ {cycle} · Đủ 12 đề và đáp án, chờ mốc giờ để mở.')
+        self.schedule_once()
+        return True
 
     def lesson_worker(self):
         # Lesson preparation/delivery stays responsive while the other worker grades submissions.
         while not self.stop.is_set():
-            job=self.store.one("SELECT * FROM jobs WHERE status='pending' AND kind IN ('prepare','generate') ORDER BY id LIMIT 1")
+            if not self.store.get('active'):self.stop.wait(.5);continue
+            job=self.store.one("SELECT * FROM jobs WHERE status='pending' AND kind='prepare_set' ORDER BY id LIMIT 1")
             if not job: self.stop.wait(.5);continue
             self.store.execute("UPDATE jobs SET status='running',attempts=attempts+1,error='' WHERE id=?",(job['id'],))
             try:
-                self.generate(json.loads(job['payload'])['seq'],publish=job['kind']=='generate')
-                self.store.execute("UPDATE jobs SET status='done' WHERE id=?",(job['id'],))
+                complete=self.generate_set(json.loads(job['payload'])['cycle'])
+                self.store.execute("UPDATE jobs SET status=? WHERE id=?",('done' if complete else 'pending',job['id']))
             except Exception as e:
                 self.store.execute("UPDATE jobs SET status='failed',error=? WHERE id=?",(str(e),job['id']))
+                self.store.execute("UPDATE lesson_sets SET status='failed',error=? WHERE cycle=?",(str(e),json.loads(job['payload'])['cycle']))
                 self.store.event('error',str(e))
             self.activity='Sẵn sàng'
 
@@ -102,7 +162,7 @@ class Engine:
 
     def worker(self):
         while not self.stop.is_set():
-            job=self.store.one("SELECT * FROM jobs WHERE status='pending' AND kind NOT IN ('prepare','generate') ORDER BY CASE WHEN kind='incoming' THEN 0 ELSE 1 END,id LIMIT 1")
+            job=self.store.one("SELECT * FROM jobs WHERE status='pending' AND kind NOT IN ('prepare','generate','prepare_set') ORDER BY CASE WHEN kind='incoming' THEN 0 ELSE 1 END,id LIMIT 1")
             if not job:
                 self.activity='Sẵn sàng'; self.wake.wait(2); self.wake.clear(); continue
             self.store.execute("UPDATE jobs SET status='running',attempts=attempts+1,error='' WHERE id=?",(job['id'],))
@@ -144,7 +204,7 @@ class Engine:
         task_id=f'HC-{seq:05d}'
         task=self.store.one('SELECT * FROM assignments WHERE id=?',(task_id,))
         if not task:
-            category,skill=SCHEDULE[(seq-1)%24]; level=self.store.get('level')
+            category,skill=SCHEDULE[(seq-1)%len(SCHEDULE)]; level=self.store.get('level')
             self.activity=f'{self.gateway.name} đang tạo {category} {skill}'
             recent=[r['title'] for r in self.store.rows('SELECT title FROM assignments ORDER BY seq DESC LIMIT 12')]
             prompt=assignment_prompt(category,skill,level,self.store.get('band'),self.store.get('goal_band'),recent)
@@ -454,7 +514,7 @@ Xuất duy nhất đối tượng JSON hợp lệ theo schema; không đổi tê
 
     def reveal_answer(self,task_id):
         task=self.store.one('SELECT * FROM assignments WHERE id=?',(task_id,))
-        if not task: raise ValueError('Không tìm thấy bài.')
+        if not task or not task['sent']: raise ValueError('Bộ chưa mở hoặc không tìm thấy bài.')
         if not task['answer_viewed']:
             self.store.execute('UPDATE assignments SET answer_viewed=? WHERE id=?',(time.time(),task_id))
             self.store.event('answer',task_id+' · Đã mở đáp án. Điểm vẫn chấm; so sánh tự làm xét khai báo và thời điểm nộp.')
@@ -474,7 +534,7 @@ Xuất duy nhất đối tượng JSON hợp lệ theo schema; không đổi tê
 
     def advance_level(self):
         last=self.store.get('last_growth_cycle')
-        tasks=self.store.rows('SELECT * FROM assignments WHERE seq>? AND seq<=? ORDER BY seq',(last*24,(last+1)*24))
+        tasks=self.store.rows('SELECT * FROM assignments WHERE archived=0 ORDER BY seq LIMIT 24 OFFSET ?',(last*24,))
         if len(tasks)!=24 or any(t['status']!='graded' or t['score'] is None for t in tasks): return
         average=sum(t['score'] for t in tasks)/24
         old=self.store.get('level')
@@ -494,6 +554,9 @@ Xuất duy nhất đối tượng JSON hợp lệ theo schema; không đổi tê
         task=self.store.one('SELECT * FROM assignments WHERE id=?',(task_id,))
         if not task or not task['evaluation']: raise ValueError('Chưa có đánh giá để bổ sung.')
         if len(note.strip())<15: raise ValueError('Ghi rõ ai kiểm tra, đã xem/nghe bằng chứng nào (ít nhất 15 ký tự).')
+        latest=self.store.one('SELECT s.id,b.id AS batch_id,b.status AS batch_status FROM submissions s LEFT JOIN batch_items i ON i.submission_id=s.id LEFT JOIN batches b ON b.id=i.batch_id WHERE s.assignment_id=? ORDER BY s.created DESC LIMIT 1',(task_id,))
+        if latest and latest['batch_id'] and latest['batch_status'] not in ('graded','needs_evidence'):
+            raise ValueError('Đợi bộ bài chấm xong trước khi bổ sung tiêu chí.')
         evaluation=json.loads(task['evaluation'])
         if evaluation['complete']: raise ValueError('Bài đã chấm đủ tiêu chí.')
         for i,criterion in enumerate(evaluation['criteria']):
@@ -505,10 +568,24 @@ Xuất duy nhất đối tượng JSON hợp lệ theo schema; không đổi tê
         data=json.loads(task['body']); evaluation=validate_evaluation(evaluation,data['rubric'])
         evaluation['human_review_note']=note.strip()
         encoded=json.dumps(evaluation,ensure_ascii=False)
-        self.store.execute("UPDATE assignments SET evaluation=?,score=?,status='graded',completed=? WHERE id=?",(encoded,evaluation['score'],time.time(),task_id))
+        with self.store.lock:
+            self.store.db.execute("UPDATE assignments SET evaluation=?,score=?,status='graded',completed=? WHERE id=?",(encoded,evaluation['score'],time.time(),task_id))
+            if latest:
+                self.store.db.execute("UPDATE submissions SET evaluation=?,status='graded' WHERE id=?",(encoded,latest['id']))
+                if latest['batch_id']:
+                    evaluations=self.store.rows('SELECT s.evaluation FROM batch_items i JOIN submissions s ON s.id=i.submission_id WHERE i.batch_id=?',(latest['batch_id'],))
+                    batch_status='graded' if len(evaluations)==12 and all(json.loads(r['evaluation'])['complete'] for r in evaluations) else 'needs_evidence'
+                    self.store.db.execute('UPDATE batches SET status=? WHERE id=?',(batch_status,latest['batch_id']))
+            self.store.db.commit()
+        if latest and latest['batch_id']:
+            rows=self.store.rows('SELECT s.evaluation,i.assignment_id FROM batch_items i JOIN submissions s ON s.id=i.submission_id JOIN assignments a ON a.id=i.assignment_id WHERE i.batch_id=? ORDER BY a.seq',(latest['batch_id'],))
+            report=self.store.root/'batches'/(latest['batch_id']+'.txt')
+            report.write_text('\n\n'.join(self.evaluation_text({'id':r['assignment_id']},json.loads(r['evaluation'])) for r in rows),encoding='utf-8-sig')
         self.store.event('review',task_id+' · Người dùng bổ sung tiêu chí thiếu, có ghi nguồn đánh giá.')
         if self.store.get('telegram_chat_id'):
-            self.telegram.queue_text(self.evaluation_text(task,evaluation)+'\n\nĐiểm bao gồm đánh giá do người dùng bổ sung: '+note,
+            message=('Đã bổ sung đánh giá '+task_id+'. Mở Hourly Coach → Bộ bài & chấm để xem kết quả và nguồn điểm.'
+                if self.store.get('telegram_notifications_only') else self.evaluation_text(task,evaluation)+'\n\nĐiểm bao gồm đánh giá do người dùng bổ sung: '+note)
+            self.telegram.queue_text(message,
                 'human:'+uuid.uuid4().hex,task_id)
             self.store.enqueue('notify',{},'human-notify:'+uuid.uuid4().hex); self.wake.set()
         self.advance_level()

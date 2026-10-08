@@ -58,7 +58,7 @@ def main():
         engine.stop.set(); engine.wake.set()
         if icon: icon.stop()
         server.shutdown()
-        engine.gateway.codex.close()
+        engine.gateway.codex.close(force=True)
     if args.headless:
         try: engine.stop.wait()
         except KeyboardInterrupt: close()
@@ -71,7 +71,7 @@ def main():
         else:
             try: engine.activate()
             except ValueError: open_dashboard()
-    icon=pystray.Icon('HourlyCoach',Image.open(ROOT/'assets'/'coach.png'),'Hourly Coach · Antigravity',
+    icon=pystray.Icon('HourlyCoach',Image.open(ROOT/'assets'/'coach.png'),'Hourly Coach',
         menu=pystray.Menu(pystray.MenuItem('Mở Hourly Coach',open_dashboard,default=True),
             pystray.MenuItem(lambda item:'Tạm dừng gửi đề' if store.get('active') else 'Bật lịch gửi đề',toggle),
             pystray.Menu.SEPARATOR,pystray.MenuItem('Thoát ứng dụng',close)))

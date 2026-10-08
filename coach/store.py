@@ -41,7 +41,7 @@ def protect(value, decrypt=False):
 DEFAULTS = dict(gateway_url='http://127.0.0.1:8000/ask', ai_provider='antigravity', codex_thread_id='', codex_seed_thread_id='', codex_reasoning_effort='', telegram_chat_id='',
     telegram_username='', telegram_notifications_only=True, pairing_code=secrets.token_hex(4), approved=False, active=False,
     next_due=0, interval=3600, band=6.5, goal_band=8.0, level=1.0, offset=0,
-    selected_assignment='', speech_model='base', speech_python='', last_growth_cycle=0)
+    selected_assignment='', speech_model='base', speech_python='', last_growth_cycle=0, curriculum_version=2)
 
 
 class Store:
@@ -83,11 +83,26 @@ class Store:
         CREATE TABLE IF NOT EXISTS batch_items(
             batch_id TEXT REFERENCES batches(id),assignment_id TEXT REFERENCES assignments(id),
             submission_id TEXT UNIQUE REFERENCES submissions(id),PRIMARY KEY(batch_id,assignment_id));
+        CREATE TABLE IF NOT EXISTS lesson_sets(
+            cycle INTEGER PRIMARY KEY,due REAL,created REAL,published REAL DEFAULT 0,
+            status TEXT DEFAULT 'preparing',source TEXT DEFAULT 'gateway',level REAL DEFAULT 1,
+            seed_key TEXT UNIQUE,error TEXT DEFAULT '');
         ''')
         draft_columns={r[1] for r in self.db.execute('PRAGMA table_info(drafts)')}
+        lesson_columns={r[1] for r in self.db.execute('PRAGMA table_info(lesson_sets)')}
+        for name in ('preparation_started','ready_at'):
+            if name not in lesson_columns:self.db.execute(f'ALTER TABLE lesson_sets ADD COLUMN {name} REAL DEFAULT 0')
         for name,definition in [('complete','INTEGER DEFAULT 0'),('assistance',"TEXT DEFAULT 'unknown'"),('updated','REAL DEFAULT 0')]:
             if name not in draft_columns:self.db.execute(f'ALTER TABLE drafts ADD COLUMN {name} {definition}')
         columns={r[1] for r in self.db.execute('PRAGMA table_info(assignments)')}
+        if 'archived' not in columns:
+            self.db.execute('ALTER TABLE assignments ADD COLUMN archived INTEGER DEFAULT 0')
+        version=self.db.execute("SELECT value FROM settings WHERE key='curriculum_version'").fetchone()
+        if version is None and self.db.execute("SELECT id FROM assignments WHERE category='IELTS' AND skill IN ('Listening','Reading') LIMIT 1").fetchone():
+            # Preserve old exercises, files and submissions; never mix them into the new bundles.
+            self.db.execute('UPDATE assignments SET archived=1')
+            self.db.execute("UPDATE jobs SET status='done',error='Đã chuyển sang bộ đủ 12 đề mỗi giờ.' WHERE kind IN ('prepare','generate') AND status IN ('pending','running','failed')")
+            self.db.execute("UPDATE settings SET value='0' WHERE key='last_growth_cycle'")
         if 'answer_viewed' not in columns:
             self.db.execute('ALTER TABLE assignments ADD COLUMN answer_viewed REAL DEFAULT 0')
         if 'assistance' not in columns:
@@ -148,20 +163,20 @@ class Store:
                             (kind,json.dumps(payload,ensure_ascii=False),dedupe,time.time()))
 
     def stats(self, date):
-        tasks = self.rows('SELECT * FROM assignments WHERE day=? AND sent>0 ORDER BY seq',(date,))
+        tasks = self.rows('SELECT * FROM assignments WHERE day=? AND sent>0 AND archived=0 ORDER BY seq',(date,))
         graded = [t for t in tasks if t['status']=='graded' and t['score'] is not None]
         groups = {}
         for t in graded:
             key = t['category'] + (' · '+t['skill'] if t['skill'] else '')
             groups.setdefault(key,[]).append(t['score'])
         # Compare identical category/skill/difficulty strata, and require 3 independent tasks per side.
-        earlier = self.rows('SELECT DISTINCT day FROM assignments WHERE day<? AND score IS NOT NULL ORDER BY day DESC LIMIT 1',(date,))
+        earlier = self.rows('SELECT DISTINCT day FROM assignments WHERE day<? AND score IS NOT NULL AND archived=0 ORDER BY day DESC LIMIT 1',(date,))
         growth = None
         comparable = 0
         baseline_day = earlier[0]['day'] if earlier else None
         differences = []
         if baseline_day:
-            before = self.rows("SELECT category,skill,level,score FROM assignments WHERE day=? AND status=? AND assistance='no'",(baseline_day,'graded'))
+            before = self.rows("SELECT category,skill,level,score FROM assignments WHERE day=? AND status=? AND assistance='no' AND archived=0",(baseline_day,'graded'))
             def strata(items):
                 result = {}
                 for t in items:

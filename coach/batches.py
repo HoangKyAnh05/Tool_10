@@ -1,5 +1,6 @@
 """Save work per exercise; submit and release results atomically for twelve types."""
 import json,time,uuid
+from collections import Counter
 from pathlib import Path
 from .curriculum import BATCH_SIZE,SCHEDULE
 from .media import MAX_TEXT,MAX_IMAGES,verify_upload
@@ -8,13 +9,13 @@ FINAL={'graded','needs_evidence'}
 
 
 def batch_state(store,cycle=None):
-    highest=store.one('SELECT max(seq) AS n FROM assignments WHERE sent>0')['n'] or 1
+    highest=store.one('SELECT max(seq) AS n FROM assignments WHERE sent>0 AND archived=0')['n'] or 1
     if cycle is None:
-        outstanding=store.one("SELECT min((a.seq-1)/12+1) AS cycle FROM assignments a WHERE a.sent>0 AND NOT EXISTS(SELECT 1 FROM batches b WHERE b.cycle=(a.seq-1)/12+1 AND b.status IN ('graded','needs_evidence'))")
+        outstanding=store.one("SELECT min((a.seq-1)/12+1) AS cycle FROM assignments a WHERE a.sent>0 AND a.archived=0 AND NOT EXISTS(SELECT 1 FROM batches b WHERE b.cycle=(a.seq-1)/12+1 AND b.status IN ('graded','needs_evidence'))")
         if outstanding['cycle']:cycle=outstanding['cycle']
     cycle=max(1,int(cycle or ((highest-1)//BATCH_SIZE+1)))
     start=(cycle-1)*BATCH_SIZE+1
-    rows=store.rows('SELECT a.id,a.seq,a.category,a.skill,a.title,a.sent,a.status,d.text,d.files,d.complete,d.assistance FROM assignments a LEFT JOIN drafts d ON d.assignment_id=a.id WHERE a.seq>=? AND a.seq<? ORDER BY a.seq',(start,start+BATCH_SIZE))
+    rows=store.rows('SELECT a.id,a.seq,a.category,a.skill,a.title,a.sent,a.status,d.text,d.files,d.complete,d.assistance FROM assignments a LEFT JOIN drafts d ON d.assignment_id=a.id WHERE a.seq>=? AND a.seq<? AND a.archived=0 ORDER BY a.seq',(start,start+BATCH_SIZE))
     by_seq={r['seq']:r for r in rows};items=[]
     for seq in range(start,start+BATCH_SIZE):
         category,skill=SCHEDULE[(seq-1)%len(SCHEDULE)]
@@ -32,12 +33,13 @@ def batch_state(store,cycle=None):
     complete=sum(r['available'] and r['complete'] and r['has_draft'] for r in items)
     return {'cycle':cycle,'size':BATCH_SIZE,'items':items,'complete':complete,'available':sum(r['available'] for r in items),
         'can_submit':complete==BATCH_SIZE and not (latest and latest['status'] in ('queued','running','failed')),
-        'batch':latest,'graded_count':finished,'results':results}
+        'batch':latest,'graded_count':finished,'results':results,'lesson_set':store.one('SELECT * FROM lesson_sets WHERE cycle=?',(cycle,))}
 
 
 def save_draft(store,task_id,text,files,complete=False,assistance='unknown'):
     task=store.one('SELECT * FROM assignments WHERE id=?',(task_id,))
     if not task or not task['sent']:raise ValueError('Chỉ lưu bài cho đề đã có trong app.')
+    if task.get('archived'):raise ValueError('Đề thuộc lịch cũ, đã được giữ trong lịch sử. Chọn một bộ mới để làm và chấm.')
     cycle=(task['seq']-1)//BATCH_SIZE+1
     if store.one("SELECT id FROM batches WHERE cycle=? AND status IN ('queued','running','failed')",(cycle,)):
         raise ValueError('Bộ bài đã gửi đang chấm hoặc cần thử lại; bản gửi đã được giữ nguyên.')
@@ -62,10 +64,10 @@ def submit_batch(engine,cycle,request_id):
             if existing['cycle']!=int(cycle):raise ValueError('Mã gửi bộ bài bị trùng.')
             return existing['id']
         state=batch_state(store,cycle)
-        if not state['can_submit']:raise ValueError('Cần hoàn thành đủ 12 đề: 9 nhóm, IELTS đủ Listening/Reading/Writing/Speaking. Chưa gửi bài nào đi chấm.')
-        tasks=store.rows('SELECT * FROM assignments WHERE seq>=? AND seq<? ORDER BY seq',((state['cycle']-1)*BATCH_SIZE+1,state['cycle']*BATCH_SIZE+1))
-        required={(c,s if c=='IELTS' else '') for c,s in SCHEDULE[:BATCH_SIZE]}
-        observed={(r['category'],r['skill'] if r['category']=='IELTS' else '') for r in tasks}
+        if not state['can_submit']:raise ValueError('Cần hoàn thành đủ 12 bài của cùng bộ: 8 nhóm khác + 2 Writing + 2 Speaking. Chưa gửi bài nào đi chấm.')
+        tasks=store.rows('SELECT * FROM assignments WHERE seq>=? AND seq<? AND archived=0 ORDER BY seq',((state['cycle']-1)*BATCH_SIZE+1,state['cycle']*BATCH_SIZE+1))
+        required=Counter((c,s if c=='IELTS' else '') for c,s in SCHEDULE[:BATCH_SIZE])
+        observed=Counter((r['category'],r['skill'] if r['category']=='IELTS' else '') for r in tasks)
         if len(tasks)!=BATCH_SIZE or observed!=required:raise ValueError('Bộ đề chưa đủ các loại yêu cầu.')
         drafts=[]
         for task in tasks:
