@@ -5,7 +5,8 @@ from faster_whisper import WhisperModel
 
 if __name__=='__main__':
     model=WhisperModel(sys.argv[2],device='cpu',compute_type='int8',download_root=sys.argv[3])
-    segments,info=model.transcribe(sys.argv[1],language='en',vad_filter=True,word_timestamps=True)
+    language=sys.argv[4] if len(sys.argv)>4 else 'en'
+    segments,info=model.transcribe(sys.argv[1],language=None if language=='auto' else language,vad_filter=True,word_timestamps=True)
     parts=[]; words=[]
     for segment in segments:
         parts.append(segment.text.strip())

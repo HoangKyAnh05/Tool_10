@@ -12,7 +12,7 @@ $appPython = Join-Path $appRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $appPython)) { $appPython = (Get-Command python.exe).Source }
 Push-Location $appRoot
 try {
-    & $appPython (Join-Path $appRoot 'tools_configure_speech.py') $speechPython
+    & $appPython (Join-Path $appRoot 'coach\configure_speech.py') $speechPython
     if ($LASTEXITCODE -ne 0) { throw 'Speech installed, but could not update app configuration.' }
 }
 finally { Pop-Location }

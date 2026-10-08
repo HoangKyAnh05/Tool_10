@@ -78,7 +78,15 @@ class Store:
             message_id INTEGER, error TEXT DEFAULT '');
         CREATE TABLE IF NOT EXISTS events(
             id INTEGER PRIMARY KEY AUTOINCREMENT, created REAL, kind TEXT, message TEXT);
+        CREATE TABLE IF NOT EXISTS batches(
+            id TEXT PRIMARY KEY,cycle INTEGER NOT NULL,status TEXT NOT NULL,created REAL,completed REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS batch_items(
+            batch_id TEXT REFERENCES batches(id),assignment_id TEXT REFERENCES assignments(id),
+            submission_id TEXT UNIQUE REFERENCES submissions(id),PRIMARY KEY(batch_id,assignment_id));
         ''')
+        draft_columns={r[1] for r in self.db.execute('PRAGMA table_info(drafts)')}
+        for name,definition in [('complete','INTEGER DEFAULT 0'),('assistance',"TEXT DEFAULT 'unknown'"),('updated','REAL DEFAULT 0')]:
+            if name not in draft_columns:self.db.execute(f'ALTER TABLE drafts ADD COLUMN {name} {definition}')
         columns={r[1] for r in self.db.execute('PRAGMA table_info(assignments)')}
         if 'answer_viewed' not in columns:
             self.db.execute('ALTER TABLE assignments ADD COLUMN answer_viewed REAL DEFAULT 0')

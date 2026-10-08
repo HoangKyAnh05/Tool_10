@@ -7,18 +7,31 @@ from xml.etree import ElementTree as ET
 from PIL import Image
 
 MAX_FILE = 20 * 1024 * 1024
+MAX_VIDEO = 100 * 1024 * 1024
 MAX_TEXT = 120000
 MAX_IMAGES = 40
-ALLOWED = {'.docx','.txt','.png','.jpg','.jpeg','.webp','.wav','.mp3','.m4a','.ogg','.oga','.flac'}
+VIDEO = {'.mp4','.mov','.webm','.mkv'}
+ALLOWED = {'.docx','.txt','.png','.jpg','.jpeg','.webp','.wav','.mp3','.m4a','.ogg','.oga','.flac'} | VIDEO
 AUDIO = {'.wav','.mp3','.m4a','.ogg','.oga','.flac'}
 
 
 def verify_upload(path):
     path=Path(path)
     if path.suffix.lower() not in ALLOWED:
-        raise ValueError('Hỗ trợ DOCX, TXT, PNG/JPG/WebP hoặc audio; không nhận DOC cũ, PDF, ZIP hay link Docs.')
-    if path.stat().st_size>MAX_FILE:
-        raise ValueError('Mỗi file cần nhỏ hơn hoặc bằng 20 MB.')
+        raise ValueError('Hỗ trợ DOCX, TXT, ảnh, audio hoặc MP4/MOV/WebM/MKV.')
+    limit=MAX_VIDEO if path.suffix.lower() in VIDEO else MAX_FILE
+    if path.stat().st_size>limit:
+        raise ValueError('Video tối đa 100 MB; file khác tối đa 20 MB.')
+
+
+def extract_video(path,folder,python):
+    try:
+        result=subprocess.run([python or sys.executable,str(Path(__file__).with_name('video.py')),str(path),str(folder)],capture_output=True,text=True,encoding='utf-8',timeout=300,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        data=json.loads(result.stdout)
+    except (OSError,subprocess.TimeoutExpired,ValueError):
+        raise ValueError('Chưa đọc được video. Cài bộ audio/video bằng INSTALL-SPEECH.ps1 rồi thử lại; bản gốc vẫn được lưu.') from None
+    if result.returncode:raise ValueError(data.get('error','Không giải mã được video.'))
+    return data
 
 
 def image_to_png(source,target):
@@ -70,10 +83,10 @@ def extract_docx(path,folder):
     return value,images
 
 
-def transcribe(path,python,model,cache):
+def transcribe(path,python,model,cache,language='en'):
     script=Path(__file__).with_name('speech.py')
     try:
-        result=subprocess.run([python or sys.executable,str(script),str(path),model,str(cache)],
+        result=subprocess.run([python or sys.executable,str(script),str(path),model,str(cache),language or 'auto'],
             capture_output=True,text=True,encoding='utf-8',timeout=600,
             creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     except (OSError,subprocess.TimeoutExpired):

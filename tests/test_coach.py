@@ -354,9 +354,11 @@ class HttpTests(Case):
         tid=self.task();headers={'X-Coach-Request':'1'}
         file=self.client.post(self.url+'/api/upload',json={'name':'answer.txt','data':'QW5zd2VyIGVzc2F5'},headers=headers).json()
         self.assertTrue(file['ok'])
-        response=self.client.post(self.url+'/api/submit',json={'id':tid,'text':'My essay','files':[file['path']]},headers=headers)
+        response=self.client.post(self.url+'/api/draft',json={'id':tid,'text':'My essay','files':[file['path']],'complete':True},headers=headers)
         self.assertEqual(response.status_code,200)
-        sid=response.json()['submission_id'];rubric=samples()[0]['rubric']
+        self.assertFalse(self.store.rows('SELECT * FROM submissions'))
+        self.assertEqual(self.client.post(self.url+'/api/submit',json={'id':tid,'text':'My essay'},headers=headers).status_code,400)
+        sid=self.engine.submit(tid,'My essay',[str(self.root/file['path'])]);rubric=samples()[0]['rubric']
         evaluation={'criteria':[dict(r,score=20,feedback='Evidence-linked feedback') for r in rubric],
             **{k:'Detailed response for testing' for k in ('summary','corrections','model_answer','next_steps','evidence_limits')}}
         with patch.object(self.engine.gateway,'ask',return_value=json.dumps(evaluation)):

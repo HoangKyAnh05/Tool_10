@@ -1,6 +1,6 @@
 # Hourly Coach
 
-Ứng dụng luyện tập chạy nền trên Windows. Mỗi giờ tròn có một đề đầy đủ trong app; làm bài, nộp DOCX/text/ảnh/audio, xem đáp án và đánh giá trên laptop. Telegram chỉ gửi thông báo có đề mới hoặc chấm xong. Dữ liệu lưu tại máy.
+Ứng dụng luyện tập chạy nền trên Windows. Mỗi giờ tròn có một đề đầy đủ trong app; làm bài, lưu text/ảnh/video/DOCX/audio ở cuối từng đề. Hoàn thành đủ 12 loại đề rồi gửi cả bộ, nhận kết quả cùng lúc trên laptop. Telegram chỉ báo có đề mới hoặc chấm xong cả bộ. Dữ liệu lưu tại máy.
 
 ## Cài và bắt đầu
 
@@ -8,7 +8,7 @@
 2. Mở shortcut **Hourly Coach** → **Cài đặt kết nối**. Chọn Codex Chat và kiểm tra kết nối. Cần Codex được cài, đăng nhập ChatGPT và chat riêng cho gateway. Xem [CODEX-CHAT.md](CODEX-CHAT.md). Antigravity localhost là nguồn thay thế.
 3. Xem **Đề mẫu để duyệt** và mở đáp án tham khảo khi cần. Duyệt cấu trúc đề để bật lịch tại giờ tròn kế tiếp.
 4. Nút **Bật/Dừng tạo đề tự động** nằm ở đầu mọi màn hình. Dừng lịch vẫn giữ đề/bài nộp và tiếp tục chấm bài đã gửi; bật lại bắt đầu từ giờ tròn kế tiếp.
-5. Vào **Lộ trình mỗi ngày** → chọn đề → **Bài nộp** → đính kèm bài → **Nộp & chấm toàn bộ**. Xem các tab Đề bài, Bài nộp, Đánh giá và Đáp án.
+5. Vào **Lộ trình mỗi ngày** → chọn đề → ô **Bài làm của bạn** ngay cuối đề. Lưu text và file, đánh dấu hoàn thành. Đủ **9 nhóm + 4 kỹ năng IELTS = 12 đề** → **Bộ bài & chấm** → **Gửi tất cả & chấm**. Kết quả của cả bộ mở cùng lúc, đồng thời hiện dưới ô bài làm của từng đề. Lưu nháp không đưa bài đi chấm; server chặn gửi từng đề và chặn gửi bộ còn thiếu.
 6. Telegram tùy chọn: tạo bot riêng trong [BotFather](https://t.me/BotFather), lưu token trong app, mở link ghép và bấm **Start**. Quay lại app kiểm tra ghép rồi thử thông báo. Không dùng chung bot với một ứng dụng đang polling hoặc có webhook.
 
 ```powershell
@@ -28,7 +28,7 @@ Máy phải đang bật, có mạng và phiên Codex còn dùng được. Máy n
 
 ## Bộ đề
 
-24 lượt luân phiên chín nhóm: IELTS, Cầu lông, Content, Edit, Bán hàng, Dạy, Quay 100 source, Tạo dịch vụ gói gọn và Livestream. IELTS có đủ bốn kỹ năng qua các lượt riêng:
+24 lượt mỗi ngày chia thành hai bộ 12 loại đầy đủ, luân phiên chín nhóm: IELTS, Cầu lông, Content, Edit, Bán hàng, Dạy, Quay 100 source, Tạo dịch vụ gói gọn và Livestream. IELTS có đủ bốn kỹ năng qua các lượt riêng:
 
 | Kỹ năng | Đầu ra của đề |
 |---|---|
@@ -43,11 +43,11 @@ Nội dung đề trình bày bằng bảng. Livestream có hai bảng riêng **C
 
 ## Nộp bài và đánh giá
 
-Ưu tiên DOCX vì giữ chữ, bảng và ảnh. Có thể nộp text, ảnh và audio trong app. Google Docs/Drive hiện chưa tích hợp; xuất DOCX từ tài liệu rồi đính kèm. `.doc`, PDF và video chưa được hỗ trợ trực tiếp. Mỗi file tối đa 20 MB, mỗi lượt tối đa 40 ảnh và 120.000 ký tự sau trích xuất.
+Ưu tiên DOCX vì giữ chữ, bảng và ảnh. Có thể lưu text, ảnh, audio và video MP4/MOV/WebM/MKV trong app, rồi gửi khi đủ cả bộ. Google Docs/Drive hiện chưa tích hợp; xuất DOCX từ tài liệu rồi đính kèm. `.doc` và PDF chưa được hỗ trợ trực tiếp. Video tối đa 100 MB và 30 phút; file khác tối đa 20 MB. Mỗi bài tối đa 40 ảnh sau trích xuất và 120.000 ký tự. Cần chạy INSTALL-SPEECH.ps1 để có PyAV và faster-whisper cho audio/video.
 
-Ghi có/không tham khảo đáp án. Bài và file gốc được lưu trước khi AI chấm. Ảnh được phân tích riêng và giữ thứ tự. Nội dung tài liệu là dữ liệu cần đánh giá, không phải chỉ dẫn để thực thi mã hoặc mở link.
+Ghi có/không tham khảo đáp án. Bản nháp và file gốc được lưu trước khi gửi cả bộ. Khi đủ 12 bài, app lưu bản gửi của cả bộ trong một giao dịch rồi xếp hàng chấm. Kết quả của từng bài được giữ lại cho đến khi cả bộ xong; Telegram chỉ gửi một thông báo kết quả. Nếu có lỗi, thử lại các bài lỗi mà không gửi lại các bài đã chấm. Ảnh được phân tích riêng và giữ thứ tự. Nội dung tài liệu là dữ liệu cần đánh giá, không phải chỉ dẫn để thực thi mã hoặc mở link.
 
-Speaking audio được chép lời cục bộ. Pronunciation cần người nghe bản ghi thực tế bổ sung; transcript không chứng minh phát âm. Kỹ thuật vận động, âm thanh/edit và giữ chân livestream cần bằng chứng phù hợp. Nếu thiếu, app ghi chưa chấm đủ và không tự kết luận năng lực. Có thể bổ sung điểm từ người nghe/xem, nguồn đánh giá được ghi riêng.
+Video được giải mã bằng PyAV, lấy tối đa 12 frame mẫu trải đều có timecode và trích âm thanh để chép lời. App ghi rõ bằng chứng đã đọc, không tuyên bố xem liên tục toàn bộ video hoặc nghe trực tiếp nhạc/giọng. Speaking audio được chép lời cục bộ. Pronunciation cần người nghe bản ghi thực tế bổ sung; transcript không chứng minh phát âm. Kỹ thuật vận động, âm thanh/edit và giữ chân livestream cần bằng chứng phù hợp. Nếu thiếu, app ghi chưa chấm đủ và không tự kết luận năng lực. Có thể bổ sung điểm từ người nghe/xem, nguồn đánh giá được ghi riêng.
 
 ## Tiến bộ và độ khó
 

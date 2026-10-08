@@ -12,7 +12,8 @@ from .store import day_of
 from .samples import samples
 from .curriculum import SCHEDULE,public_assignment
 from .gateway import Gateway
-from .media import ALLOWED,MAX_FILE
+from .media import ALLOWED,VIDEO,MAX_FILE,MAX_VIDEO
+from .batches import batch_state,save_draft,submit_batch,FINAL
 from .charts import render_chart
 from .codex_chat import ChatError
 
@@ -68,11 +69,15 @@ def create_server(engine,web,port=8766,token=None):
                     waiting=store.one('SELECT seq FROM assignments WHERE sent=0 ORDER BY seq LIMIT 1')
                     data['codex_requests']=store.rows('SELECT id,created,completed,status,model,error,length(answer) AS answer_chars FROM codex_requests ORDER BY created DESC LIMIT 8')
                     data['next_sequence']=waiting['seq'] if waiting else (store.one('SELECT max(seq) AS n FROM assignments')['n'] or 0)+1
+                    data['batch']=batch_state(store)
+                    data['batch_history']=store.rows('SELECT id,cycle,status,created,completed FROM batches ORDER BY created DESC LIMIT 20')
                     running=store.one("SELECT kind FROM jobs WHERE status='running' LIMIT 1")
                     if running and data['activity']=='Sẵn sàng':
                         data['activity']={'prepare':'Đang chuẩn bị đề trước giờ gửi','generate':'Đang gửi đề',
                             'grade':'Đang chấm bài','preview':'Đang tạo mẫu Antigravity','incoming':'Đang nhận bài'}.get(running['kind'],'Đang xử lý')
                     self.json(200,data); return
+                if path=='/api/batch':
+                    self.json(200,batch_state(store,query.get('cycle',[None])[0]));return
                 if path=='/api/samples':
                     data=samples(); preview=store.root/'ai-preview.json'
                     if preview.exists():
@@ -100,7 +105,12 @@ def create_server(engine,web,port=8766,token=None):
                     task['submissions']=store.rows('SELECT id,created,text,files,status,error,evaluation FROM submissions WHERE assignment_id=? ORDER BY created DESC',(task_id,))
                     for sub in task['submissions']:
                         sub['files']=[{'name':Path(p).name,'url':'/api/file?path='+__import__('urllib.parse',fromlist=['quote']).quote(str(Path(p).resolve().relative_to(store.root.resolve())))} for p in json.loads(sub['files'])]
-                        sub['evaluation']=json.loads(sub['evaluation']) if sub['evaluation'] else None
+                        batch=store.one('SELECT b.id,b.status FROM batch_items i JOIN batches b ON b.id=i.batch_id WHERE i.submission_id=?',(sub['id'],))
+                        sub['evaluation']=json.loads(sub['evaluation']) if sub['evaluation'] and (not batch or batch['status'] in FINAL) else None
+                        sub['batch_id']=batch['id'] if batch else None
+                    draft=store.one('SELECT * FROM drafts WHERE assignment_id=?',(task_id,))
+                    task['draft']={'text':draft['text'],'complete':bool(draft['complete']),'assistance':draft['assistance'],'files':[{'path':str(Path(p).resolve().relative_to(store.root.resolve())).replace('\\','/'),'name':Path(p).name} for p in json.loads(draft['files'])]} if draft else {'text':'','files':[],'complete':False,'assistance':'unknown'}
+                    task['batch']=batch_state(store,(task['seq']-1)//12+1)
                     task['audio']=[{'name':p.name,'url':'/api/file?path='+str(p.relative_to(store.root)).replace('\\','/')} for p in (store.root/'assignments'/task_id).glob('*.wav')]
                     self.json(200,task); return
                 if path=='/api/health': self.json(200,engine.gateway.health()); return
@@ -140,7 +150,8 @@ def create_server(engine,web,port=8766,token=None):
                 self.json(403,{'error':'Yêu cầu không hợp lệ.'}); return
             try:
                 size=int(self.headers.get('Content-Length',0))
-                if not 0<size<29*1024*1024: raise ValueError('Yêu cầu quá lớn hoặc trống.')
+                limit=(MAX_VIDEO*4//3+1024*1024) if urlsplit(self.path).path=='/api/upload' else 29*1024*1024
+                if not 0<size<limit: raise ValueError('Yêu cầu quá lớn hoặc trống.')
                 data=json.loads(self.rfile.read(size)); path=urlsplit(self.path).path
                 result={'ok':True}
                 if path=='/api/settings':
@@ -214,17 +225,25 @@ def create_server(engine,web,port=8766,token=None):
                     name=Path(str(data.get('name',''))).name; suffix=Path(name).suffix.lower()
                     if suffix not in ALLOWED: raise ValueError('Định dạng file chưa hỗ trợ.')
                     raw=base64.b64decode(data.get('data',''),validate=True)
-                    if not raw or len(raw)>MAX_FILE: raise ValueError('File phải từ 1 byte đến 20 MB.')
+                    limit=MAX_VIDEO if suffix in VIDEO else MAX_FILE
+                    if not raw or len(raw)>limit: raise ValueError('Video tối đa 100 MB; file khác tối đa 20 MB.')
                     folder=store.root/'uploads'/secrets.token_hex(12); folder.mkdir(parents=True)
                     target=folder/name; target.write_bytes(raw)
                     result={'ok':True,'path':str(target.relative_to(store.root)),'name':name}
                 elif path=='/api/submit':
+                    raise ValueError('Lưu bài nháp ở cuối đề. Cần đủ 12 đề rồi bấm Gửi tất cả & chấm, không chấm riêng từng đề.')
+                elif path=='/api/batch/submit':
+                    request_id=str(data.get('request_id',''))
+                    if not __import__('re').fullmatch('[a-f0-9]{32}',request_id):raise ValueError('Mã gửi bộ bài chưa hợp lệ.')
+                    result['batch_id']=submit_batch(engine,int(data['cycle']),request_id)
+                elif path=='/api/draft':
                     files=[]
                     for name in data.get('files',[]):
                         p=(store.root/name).resolve()
                         if not p.is_relative_to((store.root/'uploads').resolve()) or not p.is_file(): raise ValueError('File bài nộp không hợp lệ.')
                         files.append(str(p))
-                    result['submission_id']=engine.submit(data['id'],str(data.get('text','')),files,assistance=str(data.get('assistance','unknown')))
+                    if not isinstance(data.get('complete'),bool):raise ValueError('Trạng thái hoàn thành chưa hợp lệ.')
+                    result['batch']=save_draft(store,data['id'],str(data.get('text','')),files,data['complete'],str(data.get('assistance','unknown')))
                 elif path=='/api/answers': engine.reveal_answer(data['id'])
                 elif path=='/api/retry': engine.retry(bool(data.get('include_uncertain')))
                 elif path=='/api/verify': engine.verify_criteria(data['id'],data['scores'],str(data.get('note','')))
