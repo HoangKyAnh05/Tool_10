@@ -162,6 +162,8 @@ class Engine:
 
     def worker(self):
         while not self.stop.is_set():
+            if (self.store.get('reconnect_until') or 0)>time.time():
+                self.stop.wait(.5);continue
             job=self.store.one("SELECT * FROM jobs WHERE status='pending' AND kind NOT IN ('prepare','generate','prepare_set') ORDER BY CASE WHEN kind='incoming' THEN 0 ELSE 1 END,id LIMIT 1")
             if not job:
                 self.activity='Sẵn sàng'; self.wake.wait(2); self.wake.clear(); continue

@@ -41,7 +41,7 @@ def protect(value, decrypt=False):
 DEFAULTS = dict(ai_provider='codex_chat', codex_thread_id='', codex_seed_thread_id='', codex_reasoning_effort='', telegram_chat_id='',
     telegram_username='', telegram_notifications_only=True, pairing_code=secrets.token_hex(4), approved=False, active=False,
     next_due=0, interval=3600, band=6.5, goal_band=8.0, level=1.0, offset=0,
-    selected_assignment='', speech_model='base', speech_python='', last_growth_cycle=0, curriculum_version=2)
+    selected_assignment='', speech_model='base', speech_python='', last_growth_cycle=0, curriculum_version=2, reconnect_until=0)
 
 
 class Store:

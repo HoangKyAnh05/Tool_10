@@ -18,8 +18,15 @@ $desktopLink.TargetPath = $pythonWindowless
 $desktopLink.Arguments = '"' + $scriptPath + '"'
 $desktopLink.WorkingDirectory = $appRoot
 $desktopLink.IconLocation = (Join-Path $appRoot 'assets\coach.ico') + ',0'
-$desktopLink.Description = 'Hourly Coach - Antigravity Telegram learning companion'
+$desktopLink.Description = 'Hourly Coach - Codex Telegram learning companion'
 $desktopLink.Save()
+$reconnectLink = $shell.CreateShortcut((Join-Path $desktopPath 'Ket noi lai Codex.lnk'))
+$reconnectLink.TargetPath = $pythonWindowless
+$reconnectLink.Arguments = '"' + (Join-Path $appRoot 'RECONNECT-CODEX.py') + '"'
+$reconnectLink.WorkingDirectory = $appRoot
+$reconnectLink.IconLocation = (Join-Path $appRoot 'assets\coach.ico') + ',0'
+$reconnectLink.Description = 'Reconnect Hourly Coach after changing ChatGPT account'
+$reconnectLink.Save()
 $startupLink = $shell.CreateShortcut((Join-Path $startupPath 'Hourly Coach.lnk'))
 $startupLink.TargetPath = $pythonWindowless
 $startupLink.Arguments = '"' + $scriptPath + '" --hidden'

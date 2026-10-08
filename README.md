@@ -18,6 +18,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\INSTALL-SPEECH.ps1
 
 Script thứ hai cài chép lời audio bằng faster-whisper. `START.bat` mở app; `DISABLE-STARTUP.ps1` bỏ shortcut tự chạy khi đăng nhập Windows.
 
+Khi đổi tài khoản ChatGPT: đăng nhập nick mới trong Codex trước, rồi bấm shortcut Desktop **Ket noi lai Codex**. Cửa sổ sẽ chờ lượt AI đang xử lý hoàn tất, khởi động lại riêng Hourly Coach, kiểm tra Codex và giữ nguyên đề, bài nộp, mức suy nghĩ và lịch. Khi kết nối thành công có nút mở app. Không cài lại phần mềm, không tự đăng nhập và không thay mật khẩu. Nếu chờ lâu, giữ cửa sổ mở; không cần bấm shortcut nhiều lần. Kết quả gần nhất lưu tại `data/reconnect-last.json`.
+
 ## Lịch và chạy nền
 
 Ví dụ bật lúc 03:26 → đề đầu lúc 04:00, tiếp theo 05:00. App chuẩn bị trước giờ phát ít nhất 20 phút, tự tăng thời gian chuẩn bị dựa trên ba bộ gần nhất cộng khoảng đệm. Khi chưa đo được tốc độ, app dành cả giờ để chuẩn bị. Các yêu cầu AI chạy tuần tự; bộ được giữ ẩn và chỉ mở khi đến giờ và đủ cả 12 đề, đáp án và hình. AI/mạng chậm có thể khiến bộ đến trễ; lỗi được lưu và có nút thử lại. Không dùng đề/điểm giả để thay cho lỗi.

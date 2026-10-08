@@ -99,6 +99,21 @@ class CurriculumTests(Case):
 
 
 class SchedulingTests(Case):
+    def test_reconnect_holds_queued_work_then_resumes_without_losing_job(self):
+        jid=self.store.enqueue('preview',{},'reconnect-test')
+        self.store.set(reconnect_until=time.time()+60)
+        finished=threading.Event()
+        with patch.object(self.engine,'generate_preview',side_effect=finished.set):
+            worker=threading.Thread(target=self.engine.worker);worker.start()
+            try:
+                self.assertFalse(finished.wait(.6))
+                self.assertEqual(self.store.one('SELECT status FROM jobs WHERE id=?',(jid,))['status'],'pending')
+                self.store.set(reconnect_until=0);self.engine.wake.set()
+                self.assertTrue(finished.wait(2))
+            finally:
+                self.engine.stop.set();self.engine.wake.set();worker.join(3)
+        self.assertEqual(self.store.one('SELECT status FROM jobs WHERE id=?',(jid,))['status'],'done')
+
     def test_activation_without_telegram_uses_next_wall_clock_hour(self):
         self.store.set(ai_provider='codex_chat',codex_thread_id='test-thread',approved=True)
         self.assertTrue(self.engine.ready())
