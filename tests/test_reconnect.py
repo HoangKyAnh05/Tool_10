@@ -26,7 +26,7 @@ class OfflineRecoveryTests(unittest.TestCase):
                 (data/'session.json').write_text(json.dumps({'pid':20,'token':'test-session'}))
             state=Mock(ok=True)
             health=Mock();health.json.return_value={'online':True,'model':'test-model','reasoning_effort':'medium'}
-            client=Mock();client.get.side_effect=[state,health];client.post.return_value=Mock(ok=True)
+            client=Mock(headers={});client.get.side_effect=[state,health];client.post.return_value=Mock(ok=True)
             with patch.object(reconnect,'ROOT',root),patch.object(reconnect,'DATA',data),patch.object(reconnect,'process_alive',side_effect=lambda pid:pid==20),patch.object(reconnect,'start_app',side_effect=start),patch.object(reconnect.subprocess,'run',return_value=Mock(returncode=0)),patch.object(reconnect.requests,'Session',return_value=client),patch.object(reconnect.time,'sleep'):
                 proof,_=reconnect.reconnect()
             self.assertTrue(proof['success'])
