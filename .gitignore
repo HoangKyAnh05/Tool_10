@@ -1,0 +1,12 @@
+data/
+.venv/
+.speech-venv/
+__pycache__/
+*.pyc
+NEXT-SESSION.md
+ANTIGRAVITY-*.txt
+tools_*.py
+MAU-DE-BAI.*
+.env
+.env.*
+*.log
